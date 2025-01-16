@@ -3,91 +3,96 @@ package utils
 import (
 	"crypto/ecdsa"
 	"crypto/sha256"
+	"log"
 
-	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcutil/base58"
 	"github.com/ethereum/go-ethereum/crypto"
+	mrtronBase58 "github.com/mr-tron/base58"
 	"github.com/tyler-smith/go-bip32"
 	"golang.org/x/crypto/ripemd160"
 )
 
 // AddressConversion converts the child key to an address for different networks.
 func AddressConversion(childKey *bip32.Key, network string) string {
-	var address string
-
 	switch network {
 	case "EVM":
-		address = generateEVMAddress(childKey)
+		return generateEVMAddress(childKey)
 	case "BTC":
-		address = generateBTCAddress(childKey)
+		return generateBTCAddress(childKey)
 	case "TRX":
-		// TODO
-		address = generateTRXAddress(childKey)
+		return generateTRXAddress(childKey)
 	case "ERC":
-		// TODO
-		address = ""
+		return generateERCAddress(childKey)
 	default:
-		address = ""
+		log.Printf("Unsupported network: %s", network)
+		return ""
 	}
-
-	return address
 }
 
 // generateEVMAddress generates an Ethereum address from the child key.
 func generateEVMAddress(childKey *bip32.Key) string {
 	ecdaPrivateKey := crypto.ToECDSAUnsafe(childKey.Key)
 	ecdaPublicKey := ecdaPrivateKey.Public().(*ecdsa.PublicKey)
-	newAddress := crypto.PubkeyToAddress(*ecdaPublicKey)
-	return "0x" + newAddress.Hex()
+	address := crypto.PubkeyToAddress(*ecdaPublicKey)
+	return address.Hex()
 }
 
 // generateBTCAddress generates a Bitcoin address from the child key.
 func generateBTCAddress(childKey *bip32.Key) string {
 	pubKeyBytes := childKey.PublicKey().Key
-	pubKeyHash := Hash160(pubKeyBytes)
+	pubKeyHash := hash160(pubKeyBytes)
 
 	// Prepend the network prefix (0x00 for mainnet)
 	versionedPayload := append([]byte{0x00}, pubKeyHash...)
-	// Compute the checksum (double SHA-256)
-	checksum := computeChecksum(versionedPayload)
 
-	// Base58 encode the result
-	fullPayload := append(versionedPayload, checksum...)
+	// Compute the checksum and Base58 encode
+	fullPayload := append(versionedPayload, computeChecksum(versionedPayload)...)
+	return base58.Encode(fullPayload)
+}
+
+// generateERCAddress generates a Europecoin address from the child key.
+func generateERCAddress(childKey *bip32.Key) string {
+	pubKeyHash := hash160(childKey.PublicKey().Key)
+
+	// Add Europecoin version byte (0x21 for mainnet)
+	versionedPayload := append([]byte{0x21}, pubKeyHash...)
+
+	// Compute checksum and Base58 encode
+	fullPayload := append(versionedPayload, computeChecksum(versionedPayload)...)
 	return base58.Encode(fullPayload)
 }
 
 // generateTRXAddress generates a Tron address from the child key.
 func generateTRXAddress(childKey *bip32.Key) string {
-	privateKey, _ := btcec.PrivKeyFromBytes(btcec.S256(), childKey.Key)
+	pubKeyBytes := childKey.PublicKey().Key
 
-	// Use the uncompressed public key for Tron
-	publicKey := privateKey.PubKey().SerializeUncompressed()
-	pubKeyHash := Hash160(publicKey)
+	// Step 1: SHA256 hash of the public key
+	sha256Hash := sha256.Sum256(pubKeyBytes)
 
-	// Prepend Tron mainnet prefix (0x41)
-	tronNetworkByte := byte(0x41)
-	addressBytes := append([]byte{tronNetworkByte}, pubKeyHash...)
-	// Compute checksum (double SHA-256)
-	checksum := computeChecksum(addressBytes)
+	// Step 2: RIPEMD160 hash of the SHA256 result
+	ripemd160Hasher := ripemd160.New()
+	ripemd160Hasher.Write(sha256Hash[:])
+	pubKeyHash := ripemd160Hasher.Sum(nil)
 
-	// Base58 encode the result
-	fullPayload := append(addressBytes, checksum...)
-	return base58.Encode(fullPayload)
+	// Step 3: Prepend the Tron network prefix (0x41)
+	trxPayload := append([]byte{0x41}, pubKeyHash...)
+
+	// Step 4: Compute the checksum and append it
+	fullPayload := append(trxPayload, computeChecksum(trxPayload)...)
+
+	// Step 5: Base58 encode the payload
+	return mrtronBase58.Encode(fullPayload)
 }
 
 // computeChecksum computes a double SHA-256 checksum for the provided data.
 func computeChecksum(data []byte) []byte {
-	sha256Hasher := sha256.New()
-	sha256Hasher.Write(data)
-	checksum1 := sha256Hasher.Sum(nil)
-
-	sha256Hasher.Reset()
-	sha256Hasher.Write(checksum1)
-	return sha256Hasher.Sum(nil)[:4]
+	firstHash := sha256.Sum256(data)
+	secondHash := sha256.Sum256(firstHash[:])
+	return secondHash[:4]
 }
 
-// Hash160 computes the RIPEMD-160 hash of the SHA-256 hash of the input.
-func Hash160(data []byte) []byte {
+// hash160 computes the RIPEMD-160 hash of the SHA-256 hash of the input.
+func hash160(data []byte) []byte {
 	sha256Hasher := sha256.New()
 	sha256Hasher.Write(data)
 	sha256Hash := sha256Hasher.Sum(nil)
